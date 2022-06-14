@@ -84,11 +84,52 @@ void create_certificate(const std::string& settings_file, const std::string& pri
     printf("DONE\n");
 }
 
+void verify_certificate(const std::string& cert) {
+    FILE * f = fopen(cert.c_str(), "rb");
+
+    if (f == nullptr) {
+        fprintf(stderr, "Cannot open file '%s'\n", cert.c_str());
+        exit(1);
+    }
+
+    X509 * x509 = X509_new();
+    PEM_read_X509(f, &x509, nullptr, nullptr);
+
+    const int BUFFER_SIZE = 256;
+    static char buffer[BUFFER_SIZE], buffer2[BUFFER_SIZE];
+
+    X509_NAME_oneline(X509_get_subject_name(x509), buffer, BUFFER_SIZE);
+    
+
+    X509_NAME_oneline(X509_get_issuer_name(x509), buffer2, BUFFER_SIZE);
+
+    if (strcmp(buffer, buffer2) != 0) {
+        printf("Subject name does not match issuer name!");
+        printf("'%s'\n", buffer);
+        printf("'%s'\n", buffer2);
+        exit(1);
+    }
+
+    printf("Name matched!\n");
+
+    EVP_PKEY *pkey=X509_get_pubkey(x509);
+    
+    int r = X509_verify(x509, pkey);
+
+    if (r == 1) {
+        printf("Verified!\n");
+    }
+    else {
+        printf("Checksum does not match!\n");
+        exit(1);
+    }
+}
+
 void help(const std::string& progname) {
     printf("Usage %s --mode [...args]\n", progname.c_str());
     printf("Where mode is one of the following:\n");
     printf("\tcreate settings_file key.pem\n");
-    printf("\tverify cert.pem key.pem\n");
+    printf("\tverify cert.pem\n");
     printf("\tencrypt file key.pem\n");
     printf("\tdecrypt file key.pem\n");
     printf("\thelp - display this message\n");
@@ -104,6 +145,8 @@ int modern_main(const std::vector<std::string>& args) {
         create_certificate(args[2], args[3]);
     }
     else if (args[1] == "--verify") {
+        if (args.size() != 3) help(args[0]);
+        verify_certificate(args[2]);
     }
     else if (args[1] == "--encrypt") {
     }
