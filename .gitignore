@@ -2,3 +2,4 @@ main
 *.pem
 *.enc
 *.dec
+*.sig
