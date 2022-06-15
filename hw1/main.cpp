@@ -61,7 +61,6 @@ void debugHex(uint8_t* ptr, size_t sz) {
     printf("\n");
 }
 
-
 void encrypt_cbc(const std::string& key_file,
                  const std::string& input_file,
                  const std::string& output_file) {
@@ -154,16 +153,19 @@ void encrypt_cfb(const std::string& key_file,
     AES_set_encrypt_key(key, 128, &keys);
     free(key); // Do not leak key
 
-    uint8_t * sig_key = read_key_from_file(sig_key_file);
-    AES_KEY sig_keys;
-    AES_set_encrypt_key(sig_key, 128, &sig_keys);
-    free(sig_key); // Do not leak sig_key
+    uint8_t * CMAC_key = read_key_from_file(sig_key_file);
+    AES_KEY CMAC_keys;
+    AES_set_encrypt_key(CMAC_key, 128, &CMAC_keys);
+    free(CMAC_key); // Do not leak sig_key
 
     FILE * fin = open_file(input_file, FILE_READ_BINARY);
     FILE * fout = open_file(output_file, FILE_WRITE_BINARY);
 
     uint8_t iv[16];
     uint8_t input_buf[16], output_buf[16];
+
+    uint8_t CMAC_x[16], CMAC_y[16];
+    __builtin_memset(CMAC_x, 0, 16);
 
     { // Initialize IV from /dev/random
         FILE * f = fopen("/dev/random", "rb");
@@ -183,6 +185,12 @@ void encrypt_cfb(const std::string& key_file,
             __builtin_memset(input_buf + read, 0, 16 - read); // pad with zeroes
         }
 
+        // CMAC
+        for (int i = 0; i < 16; i++) {
+            CMAC_y[i] = CMAC_x[i] ^ input_buf[i];
+        }
+        AES_encrypt(CMAC_y, CMAC_x, &CMAC_keys);
+
         AES_encrypt(iv, output_buf, &keys);
         
         for (int i = 0; i < 16; i++) output_buf[i] ^= input_buf[i];
@@ -194,6 +202,13 @@ void encrypt_cfb(const std::string& key_file,
         printf("IV    : "); debugHex(iv, 16);
  */
         __builtin_memcpy(iv, output_buf, 16);
+    }
+
+
+    { // Output CMAC signature
+        FILE * f = open_file(output_file + ".sig", FILE_WRITE_BINARY);
+        fwrite(CMAC_x, 1, 16, f);
+        fclose(f);
     }
 
     fclose(fin);
@@ -210,10 +225,10 @@ void decrypt_cfb(const std::string& key_file,
     AES_set_encrypt_key(key, 128, &keys);
     free(key); // Do not leak key
 
-    uint8_t * sig_key = read_key_from_file(sig_key_file);
-    AES_KEY sig_keys;
-    AES_set_encrypt_key(sig_key, 128, &sig_keys);
-    free(sig_key); // Do not leak sig_key
+    uint8_t * CMAC_key = read_key_from_file(sig_key_file);
+    AES_KEY CMAC_keys;
+    AES_set_encrypt_key(CMAC_key, 128, &CMAC_keys);
+    free(CMAC_key); // Do not leak sig_key
 
 
     FILE * fin = open_file(input_file, FILE_READ_BINARY);
@@ -223,7 +238,11 @@ void decrypt_cfb(const std::string& key_file,
     uint8_t input_buf[16], output_buf[16];
 
     // read IV
-    fread(iv, 1, 16, fin);
+    int res = fread(iv, 1, 16, fin);
+    assert(res == 16);
+
+    uint8_t CMAC_x[16], CMAC_y[16];
+    __builtin_memset(CMAC_x, 0, 16);
 
     while (true) {
         int read = fread(input_buf, 1, 16, fin);
@@ -236,12 +255,35 @@ void decrypt_cfb(const std::string& key_file,
 
         fwrite(output_buf, 1, 16, fout);
 
+        // CMAC
+        for (int i = 0; i < 16; i++) {
+            CMAC_y[i] = CMAC_x[i] ^ output_buf[i];
+        }
+        AES_encrypt(CMAC_y, CMAC_x, &CMAC_keys);
+
 /*
         printf("Input : "); debugHex(input_buf, 16);
         printf("Output: "); debugHex(output_buf, 16);
         printf("IV    : "); debugHex(iv, 16);
 */
         __builtin_memcpy(iv, input_buf, 16);
+    }
+
+    { // Compare CMAC signature
+        FILE * f = open_file(input_file + ".sig", FILE_READ_BINARY);
+        int tmp = fread(CMAC_y, 1, 16, f);
+        assert(tmp == 16);
+
+        if (__builtin_memcmp(CMAC_x, CMAC_y, 16) != 0) {
+            printf("CMAC signature verification failed!\n");
+            printf("CMAC_x : "); debugHex(CMAC_x, 16);
+            printf("CMAC_y : ");debugHex(CMAC_y, 16);
+        }
+        else {
+            printf("CMAC signature verification OK!\n");
+        }
+
+        fclose(f);
     }
 
     fclose(fin);
