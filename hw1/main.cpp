@@ -61,6 +61,18 @@ void debugHex(uint8_t* ptr, size_t sz) {
     printf("\n");
 }
 
+void print2hex(FILE* f, uint8_t value) {
+    uint8_t bits = value / 16;
+    
+    if (bits <= 9u) fprintf(f, "%u", bits);
+    else fprintf(f, "%c", 'a' + (bits - 10));
+
+    bits = value & 15u;
+
+    if (bits <= 9u) fprintf(f, "%u", bits);
+    else fprintf(f, "%c", 'a' + (bits - 10));
+}
+
 void encrypt_cbc(const std::string& key_file,
                  const std::string& input_file,
                  const std::string& output_file) {
@@ -290,6 +302,24 @@ void decrypt_cfb(const std::string& key_file,
     fclose(fout);
 }
 
+void generate_key(const std::string& file) {
+    FILE * f = open_file(file, FILE_WRITE);
+
+    uint8_t key[16];
+    {
+        FILE * dev_rand = open_file("/dev/random", FILE_READ_BINARY);
+        int res = fread(key, 1, 16, dev_rand);
+        assert(res == 16);
+        fclose(dev_rand);
+    }
+
+    fprintf(f, "0x");
+    for (int i = 0; i < 16; i++) {
+        print2hex(f, key[i]);
+    }
+    fprintf(f, "\n");
+    fclose(f);
+}
 
 
 void help(const std::string& progname) {
@@ -297,6 +327,7 @@ void help(const std::string& progname) {
     printf("Where mode is one of the following:\n");
     printf("\tencrypt key.txt input_file output_file [mac_key.txt]\n");
     printf("\tdecrypt key.txt input_file output_file [mac_key.txt]\n");
+    printf("\tgenerate key.txt\n");
     printf("\t\t[mac_key.txt] changes mode from CBC to CFB\n");
     printf("\thelp - display this message\n"); 
     exit(0);
@@ -323,6 +354,11 @@ int modern_main(const std::vector<std::string>& args) {
         else {
             decrypt_cbc(args[2], args[3], args[4]);
         }
+    }
+    else if (args[1] == "--generate") {
+        if (args.size() != 3) help(args[0]);
+
+        generate_key(args[2]);
     }
     else {
         help(args[0]);

@@ -40,3 +40,19 @@ echo "--------------------------"
 cat TEST.cfb.dec
 echo
 echo "--------------------------"
+
+./main --generate key2.enc
+
+cat key2.enc
+
+echo "RUNING CFG enc"
+
+./main --encrypt key2.enc TEST TEST.cfb.enc key.txt
+
+echo "SHOULD FAIL SINCE PASSING WRONG SIGNATURE KEY FOR CMAC!!!!!!!!!!!!!!!"
+
+./main --decrypt key2.enc TEST.cfb.enc TEST.cfb.dec key2.enc
+
+echo "NOW SHOULD BE OK!!!!!!!!!!!!!!!"
+
+./main --decrypt key2.enc TEST.cfb.enc TEST.cfb.dec key.txt
