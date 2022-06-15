@@ -27,11 +27,17 @@ uint8_t char2hex(unsigned char c) {
     assert(false);
 }
 
+char FILE_READ[] = "r";
+char FILE_READ_BINARY[] = "rb";
+char FILE_WRITE[] = "w";
+char FILE_WRITE_BINARY[] = "wb";
+
 uint8_t * read_key_from_file(const std::string& filename) {
-    FILE * f = open_file(filename, "r");
+    FILE * f = open_file(filename, FILE_READ);
     static char tmp[256];
-    fscanf(f, "%s", tmp);
-    int res = strlen(tmp);
+    int res = fscanf(f, "%s", tmp);
+    assert(res == 1);
+    res = strlen(tmp);
 
     if (res < 2 || tmp[0] != '0' || tmp[1] != 'x') {
         fprintf(stderr, "Key should be in hexdecimal format\n");
@@ -50,7 +56,7 @@ uint8_t * read_key_from_file(const std::string& filename) {
 
 void debugHex(uint8_t* ptr, size_t sz) {
     for (size_t i = 0; i < sz; i++) {
-        printf("%u ", ptr[i]);
+        printf("%02x ", ptr[i]);
     }
     printf("\n");
 }
@@ -67,8 +73,8 @@ void encrypt_cbc(const std::string& key_file,
     free(key); // Do not leak key
 
 
-    FILE * fin = open_file(input_file, "rb");
-    FILE * fout = open_file(output_file, "wb");
+    FILE * fin = open_file(input_file, FILE_READ_BINARY);
+    FILE * fout = open_file(output_file, FILE_WRITE_BINARY);
 
     uint8_t iv[16];
     uint8_t input_buf[16], output_buf[16];
@@ -109,8 +115,8 @@ void decrypt_cbc(const std::string& key_file,
     free(key); // Do not leak key
 
 
-    FILE * fin = open_file(input_file, "rb");
-    FILE * fout = open_file(output_file, "wb");
+    FILE * fin = open_file(input_file, FILE_READ_BINARY);
+    FILE * fout = open_file(output_file, FILE_WRITE_BINARY);
 
     uint8_t iv[16];
     uint8_t input_buf[16], output_buf[16];
@@ -138,6 +144,111 @@ void decrypt_cbc(const std::string& key_file,
     fclose(fout);
 }
 
+void encrypt_cfb(const std::string& key_file,
+                 const std::string& sig_key_file,
+                 const std::string& input_file,
+                 const std::string& output_file) {
+
+    uint8_t * key = read_key_from_file(key_file);
+    AES_KEY keys;
+    AES_set_encrypt_key(key, 128, &keys);
+    free(key); // Do not leak key
+
+    uint8_t * sig_key = read_key_from_file(sig_key_file);
+    AES_KEY sig_keys;
+    AES_set_encrypt_key(sig_key, 128, &sig_keys);
+    free(sig_key); // Do not leak sig_key
+
+    FILE * fin = open_file(input_file, FILE_READ_BINARY);
+    FILE * fout = open_file(output_file, FILE_WRITE_BINARY);
+
+    uint8_t iv[16];
+    uint8_t input_buf[16], output_buf[16];
+
+    { // Initialize IV from /dev/random
+        FILE * f = fopen("/dev/random", "rb");
+        int res = fread(iv, 1, 16, f);
+
+        fwrite(iv, 1, 16, fout); // write IV
+
+        assert(res == 16);
+        fclose(f);
+    }
+
+    while (true) {
+        int read = fread(input_buf, 1, 16, fin);
+
+        if (read == 0) break;
+        if (read < 16) {
+            __builtin_memset(input_buf + read, 0, 16 - read); // pad with zeroes
+        }
+
+        AES_encrypt(iv, output_buf, &keys);
+        
+        for (int i = 0; i < 16; i++) output_buf[i] ^= input_buf[i];
+
+        fwrite(output_buf, 1, 16, fout);
+/*
+        printf("Input : "); debugHex(input_buf, 16);
+        printf("Output: "); debugHex(output_buf, 16);
+        printf("IV    : "); debugHex(iv, 16);
+ */
+        __builtin_memcpy(iv, output_buf, 16);
+    }
+
+    fclose(fin);
+    fclose(fout);
+}
+
+void decrypt_cfb(const std::string& key_file,
+                 const std::string& sig_key_file,
+                 const std::string& input_file,
+                 const std::string& output_file) {
+
+    uint8_t * key = read_key_from_file(key_file);
+    AES_KEY keys;
+    AES_set_encrypt_key(key, 128, &keys);
+    free(key); // Do not leak key
+
+    uint8_t * sig_key = read_key_from_file(sig_key_file);
+    AES_KEY sig_keys;
+    AES_set_encrypt_key(sig_key, 128, &sig_keys);
+    free(sig_key); // Do not leak sig_key
+
+
+    FILE * fin = open_file(input_file, FILE_READ_BINARY);
+    FILE * fout = open_file(output_file, FILE_WRITE_BINARY);
+
+    uint8_t iv[16];
+    uint8_t input_buf[16], output_buf[16];
+
+    // read IV
+    fread(iv, 1, 16, fin);
+
+    while (true) {
+        int read = fread(input_buf, 1, 16, fin);
+        if (read == 0) break;
+        assert(read == 16);
+
+        AES_encrypt(iv, output_buf, &keys);
+
+        for (int i = 0; i < 16; i++) output_buf[i] ^= input_buf[i];
+
+        fwrite(output_buf, 1, 16, fout);
+
+/*
+        printf("Input : "); debugHex(input_buf, 16);
+        printf("Output: "); debugHex(output_buf, 16);
+        printf("IV    : "); debugHex(iv, 16);
+*/
+        __builtin_memcpy(iv, input_buf, 16);
+    }
+
+    fclose(fin);
+    fclose(fout);
+}
+
+
 
 void help(const std::string& progname) {
     printf("Usage %s --mode [...args]\n", progname.c_str());
@@ -157,7 +268,7 @@ int modern_main(const std::vector<std::string>& args) {
         if (args.size() < 5) help(args[0]);
 
         if (args.size() == 6) {
-            //encrypt_cfb(args[2], args[5], args[3], args[4]);
+            encrypt_cfb(args[2], args[5], args[3], args[4]);
         }
         else {
             encrypt_cbc(args[2], args[3], args[4]);
@@ -165,7 +276,7 @@ int modern_main(const std::vector<std::string>& args) {
     }
     else if (args[1] == "--decrypt") {
         if (args.size() == 6) {
-            //decrypt_cfb(args[2], args[5], args[3], args[4]);
+            decrypt_cfb(args[2], args[5], args[3], args[4]);
         }
         else {
             decrypt_cbc(args[2], args[3], args[4]);
